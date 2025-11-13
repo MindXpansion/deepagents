@@ -137,3 +137,9 @@ Thumbs.db
 research_history.db
 *.pdf
 reports/
+
+# Runtime data files (v1.2.0 bulletproof systems)
+tool_analytics.json
+user_feedback.json
+memory_data.json
+circuit_breaker_state.json
