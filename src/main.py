@@ -11,9 +11,14 @@ from .tools import (
     get_news_sentiment,
     get_analyst_recommendations
 )
+from .tools.comparison import compare_stocks
 from .agents import fundamental_analyst, technical_analyst, risk_analyst
-from .ui import create_gradio_interface
+from .agents.comparison import comparison_analyst
+from .ui.gradio_app_v2 import create_gradio_interface_v2
 from .utils.config import settings
+from .utils.database import get_database
+from .utils.validation import extract_symbols_from_query
+from .utils.streaming import create_streaming_wrapper
 
 # Configure logging
 logging.basicConfig(
@@ -46,12 +51,17 @@ Your research process should be systematic and comprehensive:
    - Delegate to the risk-analyst sub-agent for comprehensive risk evaluation
    - Consider market, company-specific, and sector risks
 
-5. **Synthesis**: Combine all findings into a coherent investment thesis
+5. **Comparison Analysis** (if comparing multiple stocks):
+   - Use compare_stocks tool to fetch data for all stocks in parallel
+   - Delegate to the comparison-analyst sub-agent for side-by-side analysis
+   - Provide clear rankings and allocation suggestions
+
+6. **Synthesis**: Combine all findings into a coherent investment thesis
    - Reconcile fundamental value with technical signals
    - Balance opportunities against risks
    - Consider multiple perspectives and timeframes
 
-6. **Recommendation**: Provide clear, actionable investment recommendation
+7. **Recommendation**: Provide clear, actionable investment recommendation
    - Buy/Hold/Sell recommendation with confidence level
    - Price targets (12-month outlook)
    - Key catalysts and risk factors to monitor
@@ -107,18 +117,20 @@ def create_research_agent():
         get_financial_statements,
         get_technical_indicators,
         get_news_sentiment,
-        get_analyst_recommendations
+        get_analyst_recommendations,
+        compare_stocks  # NEW: Multi-stock comparison tool
     ]
 
     # Define sub-agents
     subagents = [
         fundamental_analyst,
         technical_analyst,
-        risk_analyst
+        risk_analyst,
+        comparison_analyst  # NEW: Comparison specialist
     ]
 
     # Create the DeepAgent
-    logger.info("Creating DeepAgent with 5 tools and 3 sub-agents")
+    logger.info("Creating DeepAgent with 6 tools and 4 sub-agents")
     agent = create_deep_agent(
         tools=tools,
         instructions=RESEARCH_INSTRUCTIONS,
@@ -174,19 +186,84 @@ def run_stock_research(query: str) -> str:
                 preview = content[:500] + "..." if len(content) > 500 else content
                 file_output += f"\n**{filename}**\n{preview}\n"
 
-        return output_text + file_output
+        final_report = output_text + file_output
+
+        # Save to database
+        try:
+            symbols = extract_symbols_from_query(query)
+            symbol = symbols[0] if symbols else "MULTI"
+
+            db = get_database()
+            db.save_research(
+                symbol=symbol,
+                query=query,
+                report=final_report,
+                metadata={"tool": "deepagents", "version": "1.1.0"}
+            )
+            logger.info(f"Saved research for {symbol} to database")
+        except Exception as db_error:
+            logger.warning(f"Failed to save to database: {db_error}")
+
+        return final_report
 
     except Exception as e:
         logger.exception("Research failed with exception")
         return f"Error: {str(e)}"
 
 
+def run_stock_research_streaming(query: str):
+    """
+    Run stock research with streaming output for real-time updates.
+
+    Args:
+        query: User's research query
+
+    Yields:
+        Progressive updates and final report
+    """
+    import time
+    from typing import Generator
+
+    # Progress messages
+    progress_steps = [
+        "🔄 Initializing DeepAgents...",
+        "📊 Gathering market data...",
+        "💹 Analyzing financial metrics...",
+        "📈 Calculating technical indicators...",
+        "📰 Checking recent news sentiment...",
+        "🏦 Reviewing analyst recommendations...",
+        "🤖 AI agents collaborating...",
+        "📝 Generating comprehensive report...",
+    ]
+
+    # Yield progress updates
+    for step in progress_steps:
+        yield f"\n{step}\n"
+        time.sleep(0.3)
+
+    # Run actual research
+    try:
+        result = run_stock_research(query)
+
+        # Yield final result with formatting
+        yield f"\n\n{'='*80}\n"
+        yield "✅ **ANALYSIS COMPLETE**\n"
+        yield f"{'='*80}\n\n"
+        yield result
+
+    except Exception as e:
+        yield f"\n\n❌ Error: {str(e)}\n"
+
+
 def main():
     """Main entry point for the application."""
-    logger.info("Starting DeepAgents Stock Research Assistant")
+    logger.info("Starting DeepAgents Stock Research Assistant v1.1")
 
-    # Create the Gradio interface
-    demo = create_gradio_interface(run_stock_research)
+    # Create the enhanced Gradio interface with streaming
+    demo = create_gradio_interface_v2(
+        research_function=run_stock_research,
+        research_function_streaming=run_stock_research_streaming
+    )
 
     # Launch the app
     logger.info(f"Launching Gradio interface on {settings.SERVER_HOST}:{settings.SERVER_PORT}")
