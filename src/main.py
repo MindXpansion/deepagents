@@ -1,4 +1,4 @@
-"""Main entry point for DeepAgents Stock Research Assistant v1.2.0."""
+"""Main entry point for DeepAgents Stock Research Assistant v1.3.0."""
 
 import logging
 import time
@@ -28,6 +28,9 @@ from .utils.health_monitor import get_health_monitor
 from .utils.feedback import get_feedback_system
 from .utils.analytics import get_tool_analytics
 from .utils.confidence import get_confidence_scorer
+
+# NEW v1.3.0: Performance optimizations
+from .utils.llm_streaming import GradioStreamingHandler, create_streaming_model
 
 # Configure logging
 logging.basicConfig(
@@ -107,7 +110,7 @@ def create_research_agent():
     Returns:
         Configured DeepAgent instance
     """
-    logger.info("Initializing DeepAgents Stock Research Assistant v1.2.0")
+    logger.info("Initializing DeepAgents Stock Research Assistant v1.3.0")
 
     # Validate configuration
     if not settings.validate():
@@ -289,54 +292,197 @@ def run_stock_research(query: str, user_context: dict = None) -> dict:
         }
 
 
-def run_stock_research_streaming(query: str):
+def run_stock_research_streaming(query: str, enable_true_streaming: bool = True):
     """
     Run stock research with streaming output for real-time updates.
 
+    v1.3.0: Now supports TRUE token-by-token streaming from LLM!
+
     Args:
         query: User's research query
+        enable_true_streaming: If True, streams LLM tokens in real-time (v1.3.0)
 
     Yields:
         Progressive updates and final report
     """
-    # Progress messages
-    progress_steps = [
-        "🔄 Initializing DeepAgents v1.2.0...",
-        "🔌 Connecting to model provider (with fallback)...",
-        "📊 Gathering market data in parallel...",
-        "💹 Analyzing financial metrics...",
-        "📈 Calculating technical indicators...",
-        "📰 Checking recent news sentiment...",
-        "🏦 Reviewing analyst recommendations...",
-        "🤖 AI agents collaborating...",
-        "🔍 Reflection agent reviewing quality...",
-        "📊 Calculating confidence scores...",
-        "📝 Generating comprehensive report...",
-    ]
+    if not enable_true_streaming:
+        # Fallback to simulated streaming (v1.2.0 behavior)
+        progress_steps = [
+            "🔄 Initializing DeepAgents v1.3.0...",
+            "🔌 Connecting to model provider (with fallback)...",
+            "📊 Gathering market data in parallel...",
+            "💹 Analyzing financial metrics...",
+            "📈 Calculating technical indicators...",
+            "📰 Checking recent news sentiment...",
+            "🏦 Reviewing analyst recommendations...",
+            "🤖 AI agents collaborating...",
+            "🔍 Reflection agent reviewing quality...",
+            "📊 Calculating confidence scores...",
+            "📝 Generating comprehensive report...",
+        ]
 
-    # Yield progress updates
-    for step in progress_steps:
-        yield f"\n{step}\n"
-        time.sleep(0.3)
+        for step in progress_steps:
+            yield f"\n{step}\n"
+            time.sleep(0.3)
 
-    # Run actual research
+        try:
+            result = run_stock_research(query)
+
+            yield f"\n\n{'='*80}\n"
+            yield "✅ **ANALYSIS COMPLETE**\n"
+            yield f"{'='*80}\n\n"
+
+            if isinstance(result, dict):
+                yield result.get("report", str(result))
+                if result.get("execution_time"):
+                    yield f"\n\n⏱️ *Execution time: {result['execution_time']:.2f}s*\n"
+            else:
+                yield result
+
+        except Exception as e:
+            yield f"\n\n❌ Error: {str(e)}\n"
+        return
+
+    # v1.3.0: TRUE TOKEN-BY-TOKEN STREAMING! 🔥
     try:
-        result = run_stock_research(query)
+        yield "\n🚀 **v1.3.0 True Token Streaming Active**\n"
+        yield "You'll see the AI thinking in real-time...\n\n"
+        yield "=" * 80 + "\n\n"
 
-        # Yield final result with formatting
-        yield f"\n\n{'='*80}\n"
-        yield "✅ **ANALYSIS COMPLETE**\n"
-        yield f"{'='*80}\n\n"
+        # Create streaming handler
+        streaming_handler = GradioStreamingHandler(chunk_size=3)
 
-        # Yield the report (now comes as dict)
-        if isinstance(result, dict):
-            yield result.get("report", str(result))
-            if result.get("execution_time"):
-                yield f"\n\n⏱️ *Execution time: {result['execution_time']:.2f}s*\n"
-        else:
-            yield result
+        # Get memory and analytics
+        memory = get_memory_system()
+        analytics = get_tool_analytics()
+        confidence_scorer = get_confidence_scorer()
+
+        # Store query in memory
+        memory.record_interaction(query, "")
+
+        # Get context
+        context = memory.get_context_for_query(query)
+
+        # Create agent with streaming enabled
+        logger.info("Creating streaming-enabled agent")
+
+        # Get model with streaming
+        model_provider = get_model_provider()
+        base_model = model_provider.get_model()
+
+        # Enable streaming on model
+        streaming_model, handler = create_streaming_model(base_model, streaming_handler)
+
+        # Create agent with streaming model
+        tools = [
+            get_stock_price,
+            get_financial_statements,
+            get_technical_indicators,
+            get_news_sentiment,
+            get_analyst_recommendations,
+            compare_stocks
+        ]
+
+        subagents = [
+            fundamental_analyst,
+            technical_analyst,
+            risk_analyst,
+            comparison_analyst,
+            reflection_agent
+        ]
+
+        agent = create_deep_agent(
+            tools=tools,
+            instructions=RESEARCH_INSTRUCTIONS,
+            subagents=subagents,
+            model=streaming_model
+        )
+
+        # Start agent invocation in background thread
+        result_container = {}
+        error_container = {}
+
+        def run_agent():
+            try:
+                result = agent.invoke({
+                    "messages": [{"role": "user", "content": query}]
+                })
+                result_container["result"] = result
+            except Exception as e:
+                error_container["error"] = e
+
+        import threading
+        agent_thread = threading.Thread(target=run_agent)
+        agent_thread.start()
+
+        # Stream tokens as they arrive
+        for chunk in streaming_handler.stream_chunks():
+            yield chunk
+
+        # Wait for agent to finish
+        agent_thread.join()
+
+        # Check for errors
+        if "error" in error_container:
+            raise error_container["error"]
+
+        # Get result
+        result = result_container.get("result", {})
+
+        # Extract final response
+        messages = result.get("messages", [])
+        if messages:
+            if isinstance(messages[-1], dict):
+                final_text = messages[-1].get("content", "")
+            elif hasattr(messages[-1], "content"):
+                final_text = messages[-1].content
+            else:
+                final_text = ""
+
+            # Add confidence scoring
+            symbols = extract_symbols_from_query(query)
+            symbol = symbols[0] if symbols else "MULTI"
+
+            research_data = {
+                "stock_price": "fetched",
+                "financials": "fetched",
+                "technical": "fetched",
+                "news": "fetched",
+                "analysts": "fetched"
+            }
+
+            confidence = confidence_scorer.calculate_confidence(
+                data=research_data,
+                analysis=final_text,
+                symbol=symbol
+            )
+
+            confidence_report = confidence_scorer.format_confidence_report(confidence)
+
+            # Yield confidence report
+            yield "\n\n" + confidence_report
+
+            # Save to database
+            try:
+                db = get_database()
+                research_id = db.save_research(
+                    symbol=symbol,
+                    query=query,
+                    report=final_text + "\n" + confidence_report,
+                    metadata={
+                        "tool": "deepagents",
+                        "version": "1.3.0",
+                        "streaming": "true",
+                        "confidence": confidence["overall_score"],
+                        "confidence_level": confidence["confidence_level"]
+                    }
+                )
+                yield f"\n\n💾 *Saved as research ID: {research_id}*\n"
+            except Exception as e:
+                logger.warning(f"Failed to save: {e}")
 
     except Exception as e:
+        logger.exception("Streaming research failed")
         yield f"\n\n❌ Error: {str(e)}\n"
 
 
@@ -384,7 +530,7 @@ def submit_feedback(research_id: int, rating: int, helpful: list, missing: list)
 
 def main():
     """Main entry point for the application."""
-    logger.info("Starting DeepAgents Stock Research Assistant v1.2.0 'Bulletproof'")
+    logger.info("Starting DeepAgents Stock Research Assistant v1.3.0 'Lightning Fast++'")
 
     # Initialize all bulletproof systems
     logger.info("Initializing bulletproof systems...")
