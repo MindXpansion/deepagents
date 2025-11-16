@@ -1,0 +1,14 @@
+# Core dependencies
+deepagents
+langchain-ollama
+langchain-core
+yfinance
+gradio
+pandas
+numpy
+pytz  # v1.3.0: Market-hours detection for smart caching
+
+# Development dependencies
+pytest>=7.0.0
+pytest-cov>=4.0.0
+pytest-asyncio>=0.21.0
